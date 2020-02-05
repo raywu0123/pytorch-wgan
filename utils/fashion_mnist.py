@@ -7,6 +7,7 @@ import errno
 import torch
 import codecs
 
+
 # Code referenced from torch source code to add Fashion-MNSIT dataset to dataloder
 # Url: http://pytorch.org/docs/0.3.0/_modules/torchvision/datasets/mnist.html#FashionMNIST
 class MNIST(data.Dataset):
