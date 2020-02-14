@@ -4,6 +4,9 @@ from torch.utils.data import DataLoader
 from .inception_score import InceptionScoreEvaluator
 
 
+epsilon = 1e-12
+
+
 def get_prior(batch_size: int, dim: int, device: torch.device):
     return torch.randn(batch_size, dim, 1, 1).to(device)
 

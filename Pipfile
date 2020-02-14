@@ -11,6 +11,7 @@ scipy = "*"
 python-dotenv = "*"
 wandb = "*"
 tqdm = "*"
+pytest = "*"
 
 [dev-packages]
 

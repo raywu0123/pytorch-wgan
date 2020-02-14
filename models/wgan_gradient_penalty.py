@@ -160,16 +160,16 @@ class WGAN_GP:
         for d_iter, (images, _) in zip(range(self.critic_iter), data_generator):
             self.d_optimizer.zero_grad()
             images = images.to(self.device)
-            d_loss_real = self.D(images)
-            d_loss_real = d_loss_real.mean()
-            d_loss_real.backward(mone)
+            d_score_real = self.D(images)
+            d_score_real = d_score_real.mean()
+            d_score_real.backward(mone)
 
             z = self.get_prior()
             fake_images = self.G(z)
             fake_images.requires_grad_(True)
-            d_loss_fake = self.D(fake_images)
-            d_loss_fake = d_loss_fake.mean()
-            d_loss_fake.backward(one)
+            d_score_fake = self.D(fake_images)
+            d_score_fake = d_score_fake.mean()
+            d_score_fake.backward(one)
 
             # Train with gradient penalty
             gradient_penalty = self.calculate_gradient_penalty(images, fake_images)
@@ -177,9 +177,9 @@ class WGAN_GP:
             self.d_optimizer.step()
 
         return {
-            'd_loss_real': d_loss_real.item(),
-            'd_loss_fake': d_loss_fake.item(),
-            'd_loss': d_loss_real.item() - d_loss_fake.item(),
+            'd_score_real': d_score_real.item(),
+            'd_score_fake': d_score_fake.item(),
+            'd_loss': d_score_fake.item() - d_score_real.item(),
             'gradient_penalty': gradient_penalty.item(),
         }
 
@@ -191,7 +191,7 @@ class WGAN_GP:
         g_loss = g_loss.mean()
         g_loss.backward(mone)
         self.g_optimizer.step()
-        return {'g_loss': g_loss.item()}
+        return {'g_loss': -g_loss.item()}
 
     def calculate_gradient_penalty(self, real_images, fake_images):
         alpha = torch.empty([len(real_images), 1, 1, 1]).uniform_().to(real_images.device)

@@ -70,7 +70,7 @@ class InceptionScoreEvaluator:
 
         # Get predictions
         preds = np.zeros((N, 1000))
-        for i, batch in tqdm(enumerate(dataloader, 0), total=N):
+        for i, batch in tqdm(enumerate(dataloader, 0), total=np.ceil(N / self.inception_batch_size)):
             batch = batch.to(self.device)
             batch_size_i = batch.size()[0]
             preds[i * self.inception_batch_size: i * self.inception_batch_size + batch_size_i] = self.get_pred(batch)
