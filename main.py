@@ -18,7 +18,7 @@ from models import MODEL_HUB
 
 
 def main(args):
-    model = MODEL_HUB[args.model](args)
+    model = MODEL_HUB[args.model.id](args, **args.model.kwargs)
     train_loader, test_loader = get_data_loader(args)
     if args.wandb:
         wandb.init(config=args)

@@ -64,17 +64,17 @@ class Discriminator(torch.nn.Module):
             # There is not good & fast implementation of layer normalization --> using per instance normalization nn.InstanceNorm2d()
             # Image (Cx32x32)
             nn.Conv2d(in_channels=channels, out_channels=256, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(256, affine=True),
+            # nn.InstanceNorm2d(256, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
 
             # State (256x16x16)
             nn.Conv2d(in_channels=256, out_channels=512, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(512, affine=True),
+            # nn.InstanceNorm2d(512, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
 
             # State (512x8x8)
             nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(1024, affine=True),
+            # nn.InstanceNorm2d(1024, affine=True),
             nn.LeakyReLU(0.2, inplace=True))
         # output of main module --> State (1024x4x4)
 
@@ -94,7 +94,7 @@ class Discriminator(torch.nn.Module):
 
 class WGAN_PairwiseReg:
 
-    def __init__(self, args):
+    def __init__(self, args, lambda_term: int, method: str):
         self.C = args.channels
         self.wandb = args.wandb
         self.eval_freq = args.eval_freq
@@ -116,9 +116,10 @@ class WGAN_PairwiseReg:
         self.g_optimizer = optim.Adam(self.G.parameters(), lr=self.learning_rate, betas=(self.b1, self.b2))
 
         self.iters = args.iters
+        self.lambda_term = lambda_term
+        self.method = method
 
         self.critic_iter = 5
-        self.lambda_term = 60
         self.IS_evaluator = InceptionScoreEvaluator(
             generator=self.generate_img,
             device=self.device,
@@ -210,7 +211,14 @@ class WGAN_PairwiseReg:
         lipschitz_square = (
             pairwise_score_square_dist / (pairwise_image_square_dist + epsilon)
         )
-        return lipschitz_square.mean() * self.lambda_term
+        if self.method == 'mean':
+            lipschitz_square = lipschitz_square.mean()
+        elif self.method == 'max':
+            lipschitz_square = lipschitz_square.max()
+        else:
+            raise ValueError('Invalid method')
+        lipschitz_penalty = torch.clamp_min(lipschitz_square, 1.) - 1.
+        return lipschitz_penalty * self.lambda_term
 
     @staticmethod
     def pairwise_euclidean_square_distance(a: torch.Tensor, b: torch.Tensor):

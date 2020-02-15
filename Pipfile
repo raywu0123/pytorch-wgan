@@ -12,6 +12,8 @@ python-dotenv = "*"
 wandb = "*"
 tqdm = "*"
 pytest = "*"
+yoctol-argparse = {editable = true,ref = "v0.3.0",git = "ssh://git@github.com/Yoctol/yoctol-argparse.git"}
+termcolor = "*"
 
 [dev-packages]
 
