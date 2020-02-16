@@ -93,6 +93,7 @@ class WGAN_CP:
     def __init__(self, args):
         print("WGAN_CP init model.")
         self.C = args.channels
+        self.batch_size = args.batch_size
         self.wandb = args.wandb
         self.device = get_device()
         self.G = Generator(args.channels).to(self.device)
@@ -100,8 +101,6 @@ class WGAN_CP:
 
         # WGAN values from paper
         self.learning_rate = 0.00005
-
-        self.batch_size = 64
         self.weight_clipping_limit = 0.01
 
         # WGAN with gradient clipping uses RMSprop instead of ADAM
