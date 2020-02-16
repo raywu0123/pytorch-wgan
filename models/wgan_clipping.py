@@ -93,6 +93,7 @@ class WGAN_CP:
     def __init__(self, args):
         print("WGAN_CP init model.")
         self.C = args.channels
+        self.batch_size = args.batch_size
         self.wandb = args.wandb
         self.device = get_device()
         self.G = Generator(args.channels).to(self.device)
@@ -100,8 +101,6 @@ class WGAN_CP:
 
         # WGAN values from paper
         self.learning_rate = 0.00005
-
-        self.batch_size = 64
         self.weight_clipping_limit = 0.01
 
         # WGAN with gradient clipping uses RMSprop instead of ADAM
@@ -156,21 +155,21 @@ class WGAN_CP:
             images = images.to(self.device)
 
             z = self.get_prior()
-            d_loss_real = self.D(images)
-            d_loss_real = d_loss_real.mean()
-            d_loss_real.backward(mone)
+            d_score_real = self.D(images)
+            d_score_real = d_score_real.mean()
+            d_score_real.backward(mone)
 
             # Train with fake images
             fake_images = self.G(z)
-            d_loss_fake = self.D(fake_images)
-            d_loss_fake = d_loss_fake.mean()
-            d_loss_fake.backward(one)
+            d_score_fake = self.D(fake_images)
+            d_score_fake = d_score_fake.mean()
+            d_score_fake.backward(one)
             self.d_optimizer.step()
 
         return {
-            'd_loss_real': d_loss_real.item(),
-            'd_loss_fake': d_loss_fake.item(),
-            'd_loss': d_loss_real.item() - d_loss_fake.item(),
+            'd_score_real': d_score_real.item(),
+            'd_score_fake': d_score_fake.item(),
+            'd_loss': d_score_fake.item() - d_score_real.item(),
         }
 
     def train_generator(self, mone):
@@ -181,7 +180,7 @@ class WGAN_CP:
         g_loss = g_loss.mean().mean(0).view(1)
         g_loss.backward(mone)
         self.g_optimizer.step()
-        return {'g_loss': g_loss.item()}
+        return {'g_loss': -g_loss.item()}
 
     def generate_img(self, num: int):
         z = self.get_prior()

@@ -6,7 +6,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch import autograd
 import wandb
 
 from utils import (
@@ -14,7 +13,9 @@ from utils import (
     infinite_batch_generator,
     get_device,
     get_prior,
+    epsilon,
 )
+from .utils import pairwise_euclidean_square_distance
 
 
 class Generator(torch.nn.Module):
@@ -64,17 +65,17 @@ class Discriminator(torch.nn.Module):
             # There is not good & fast implementation of layer normalization --> using per instance normalization nn.InstanceNorm2d()
             # Image (Cx32x32)
             nn.Conv2d(in_channels=channels, out_channels=256, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(256, affine=True),
+            # nn.InstanceNorm2d(256, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
 
             # State (256x16x16)
             nn.Conv2d(in_channels=256, out_channels=512, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(512, affine=True),
+            # nn.InstanceNorm2d(512, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
 
             # State (512x8x8)
             nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(1024, affine=True),
+            # nn.InstanceNorm2d(1024, affine=True),
             nn.LeakyReLU(0.2, inplace=True))
         # output of main module --> State (1024x4x4)
 
@@ -92,9 +93,9 @@ class Discriminator(torch.nn.Module):
         return x.view(-1, 1024 * 4 * 4)
 
 
-class WGAN_GP:
+class WGAN_PairwiseReg:
 
-    def __init__(self, args):
+    def __init__(self, args, lambda_term: int, method: str):
         self.C = args.channels
         self.batch_size = args.batch_size
         self.wandb = args.wandb
@@ -102,7 +103,7 @@ class WGAN_GP:
         self.log_freq = args.log_freq
         self.device = get_device()
 
-        print("WGAN_GradientPenalty init model.")
+        print("WGAN_PairwiseReg init model.")
         self.G = Generator(args.channels).to(self.device)
         self.D = Discriminator(args.channels).to(self.device)
 
@@ -116,9 +117,10 @@ class WGAN_GP:
         self.g_optimizer = optim.Adam(self.G.parameters(), lr=self.learning_rate, betas=(self.b1, self.b2))
 
         self.iters = args.iters
+        self.lambda_term = lambda_term
+        self.method = method
 
         self.critic_iter = 5
-        self.lambda_term = 10
         self.IS_evaluator = InceptionScoreEvaluator(
             generator=self.generate_img,
             device=self.device,
@@ -161,26 +163,28 @@ class WGAN_GP:
             self.d_optimizer.zero_grad()
             images = images.to(self.device)
             d_score_real = self.D(images)
-            d_score_real = d_score_real.mean()
-            d_score_real.backward(mone)
+            d_score_real_mean = d_score_real.mean()
+            d_score_real_mean.backward(mone, retain_graph=True)
 
             z = self.get_prior()
             fake_images = self.G(z)
             fake_images.requires_grad_(True)
             d_score_fake = self.D(fake_images)
-            d_score_fake = d_score_fake.mean()
-            d_score_fake.backward(one)
+            d_score_fake_mean = d_score_fake.mean()
+            d_score_fake_mean.backward(one, retain_graph=True)
 
             # Train with gradient penalty
-            gradient_penalty = self.calculate_gradient_penalty(images, fake_images)
-            gradient_penalty.backward()
+            lipschitz_penalty = self.calculate_lipschitz_penalty(
+                images, d_score_real, fake_images, d_score_fake,
+            )
+            lipschitz_penalty.backward()
             self.d_optimizer.step()
 
         return {
-            'd_score_real': d_score_real.item(),
-            'd_score_fake': d_score_fake.item(),
-            'd_loss': d_score_fake.item() - d_score_real.item(),
-            'gradient_penalty': gradient_penalty.item(),
+            'd_score_real': d_score_real_mean.item(),
+            'd_score_fake': d_score_fake_mean.item(),
+            'd_loss': d_score_fake_mean.item() - d_score_real_mean.item(),
+            'lipschitz_penalty': lipschitz_penalty.item(),
         }
 
     def train_generator(self, mone):
@@ -193,23 +197,29 @@ class WGAN_GP:
         self.g_optimizer.step()
         return {'g_loss': -g_loss.item()}
 
-    def calculate_gradient_penalty(self, real_images, fake_images):
-        alpha = torch.empty([len(real_images), 1, 1, 1]).uniform_().to(real_images.device)
-        alpha = alpha.expand(*real_images.shape)
-        interpolates = alpha * real_images + (1 - alpha) * fake_images.detach()
-        interpolates = interpolates.clone().detach().requires_grad_(True)
-        disc_interpolates = self.D(interpolates)
-        gradients = autograd.grad(
-            outputs=disc_interpolates,
-            inputs=interpolates,
-            grad_outputs=torch.ones(disc_interpolates.size(), device=self.device),
-            create_graph=True,
-            retain_graph=True,
-            allow_unused=True,
-        )[0]
-        gradients = gradients.view(gradients.size(0), -1)
-        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.lambda_term
-        return gradient_penalty
+    def calculate_lipschitz_penalty(self, real_images, real_scores, fake_images, fake_scores):
+        real_images = real_images.view(len(real_images), -1)  # (N, D)
+        real_scores = real_scores.view(len(real_scores), -1)  # (N, 1)
+        fake_images = fake_images.view(len(fake_images), -1)  # (N, D)
+        fake_scores = fake_scores.view(len(fake_scores), -1)  # (N, 1)
+
+        pairwise_image_square_dist = pairwise_euclidean_square_distance(
+            real_images, fake_images,
+        )  # (N, N)
+        pairwise_score_square_dist = pairwise_euclidean_square_distance(
+            real_scores, fake_scores,
+        )  # (N, N)
+        lipschitz_square = (
+            pairwise_score_square_dist / (pairwise_image_square_dist + epsilon)
+        )
+        if self.method == 'mean':
+            lipschitz_square = lipschitz_square.mean()
+        elif self.method == 'max':
+            lipschitz_square = lipschitz_square.max()
+        else:
+            raise ValueError('Invalid method')
+        lipschitz_penalty = torch.clamp_min(lipschitz_square, 1.) - 1.
+        return lipschitz_penalty * self.lambda_term
 
     def generate_img(self, num: int):
         with torch.no_grad():
