@@ -174,6 +174,7 @@ class WGAN_GP:
             # Train with gradient penalty
             gradient_penalty = self.calculate_gradient_penalty(images, fake_images)
             gradient_penalty.backward()
+            nn.utils.clip_grad_norm_(self.D.parameters(), 5.)
             self.d_optimizer.step()
 
         return {

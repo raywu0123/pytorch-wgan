@@ -21,7 +21,15 @@ from .wgan_gradient_penalty import Generator, Discriminator
 
 class WGAN_PairwiseOutOfSupportReg:
 
-    def __init__(self, args, lambda_term: int, interpolation: str, penalty: str):
+    def __init__(
+        self,
+        args,
+        lambda_term: int,
+        interpolation: str,
+        penalty: str,
+        center: float,
+        stop_gradient: bool,
+    ):
         self.C = args.channels
         self.batch_size = args.batch_size
         self.wandb = args.wandb
@@ -46,6 +54,8 @@ class WGAN_PairwiseOutOfSupportReg:
         self.lambda_term = lambda_term
         self.interpolation = interpolation
         self.penalty = penalty
+        self.center = center
+        self.stop_gradient = stop_gradient
 
         self.critic_iter = 5
         self.IS_evaluator = InceptionScoreEvaluator(
@@ -125,17 +135,17 @@ class WGAN_PairwiseOutOfSupportReg:
 
     @staticmethod
     def _lipschitz_square(real_images, real_scores, fake_images, fake_scores):
-        real_images = real_images.view(len(real_images), -1)  # (N, D)
-        real_scores = real_scores.view(len(real_scores), -1)  # (N, 1)
+        real_images = real_images.view(len(real_images), -1)  # (M, D)
+        real_scores = real_scores.view(len(real_scores), -1)  # (M, 1)
         fake_images = fake_images.view(len(fake_images), -1)  # (N, D)
         fake_scores = fake_scores.view(len(fake_scores), -1)  # (N, 1)
 
         pairwise_image_square_dist = pairwise_euclidean_square_distance(
             real_images, fake_images,
-        )  # (N, N)
+        )  # (M, N)
         pairwise_score_square_dist = pairwise_euclidean_square_distance(
             real_scores, fake_scores,
-        )  # (N, N)
+        )  # (M, N)
         lipschitz_square = (
             pairwise_score_square_dist / (pairwise_image_square_dist + epsilon)
         )
@@ -143,6 +153,10 @@ class WGAN_PairwiseOutOfSupportReg:
 
     def calculate_lipschitz_penalty(self, real_images, real_scores, fake_images, fake_scores):
         N = len(real_images)
+        if self.stop_gradient:
+            real_scores = real_scores.clone().detach().requires_grad_(True)
+            fake_scores = fake_scores.clone().detach().requires_grad_(True)
+
         if self.interpolation == 'topk':
             real_fake_lipschitz_square = self._lipschitz_square(
                 real_images, real_scores,
@@ -158,7 +172,6 @@ class WGAN_PairwiseOutOfSupportReg:
 
         alphas = torch.empty([N, 1, 1, 1]).uniform_().to(self.device)
         interpolations = topk_real_images * alphas + topk_fake_images * (1 - alphas)
-        interpolations = interpolations.clone().detach().requires_grad_(True)
         interpolation_scores = self.D(interpolations)
 
         if self.penalty == 'gradient':
@@ -171,19 +184,25 @@ class WGAN_PairwiseOutOfSupportReg:
                 allow_unused=True,
             )[0]
             gradients = gradients.view(gradients.size(0), -1)
-            penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+            penalty = ((gradients.norm(2, dim=1) - self.center) ** 2).mean()
         elif self.penalty == 'slope':
-            inter_real_lipschitz_square = self._lipschitz_square(
-                interpolations, interpolation_scores,
-                real_images, real_scores,
-            )  # (k, N)
-            inter_fake_lipschitz_square = self._lipschitz_square(
-                interpolations, interpolation_scores,
-                fake_images.detach(), fake_scores,
-            )  # (k, N)
-            penalty = torch.cat([
+            # inter_real_lipschitz_square = self._lipschitz_square(
+            #     interpolations, interpolation_scores,
+            #     real_images, real_scores,
+            # )  # (k, N)
+            # inter_fake_lipschitz_square = self._lipschitz_square(
+            #     interpolations, interpolation_scores,
+            #     fake_images, fake_scores,
+            # )  # (k, N)
+            inter_real_lipschitz_square = (interpolations - real_images) ** 2 / (
+                (interpolation_scores - real_scores) ** 2 + epsilon
+            )
+            inter_fake_lipschitz_square = (interpolations - fake_images) ** 2 / (
+                (interpolation_scores - fake_scores) ** 2 + epsilon
+            )
+            penalty = torch.abs(torch.cat([
                 inter_real_lipschitz_square, inter_fake_lipschitz_square
-            ]).mean()
+            ]).mean() - self.center)
         else:
             raise ValueError('Unsupported penalty method.')
         return penalty * self.lambda_term

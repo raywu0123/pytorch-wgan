@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 import torch
+from torch import autograd
 import torch.nn as nn
 import torch.optim as optim
 import wandb
@@ -95,7 +96,14 @@ class Discriminator(torch.nn.Module):
 
 class WGAN_PairwiseReg:
 
-    def __init__(self, args, lambda_term: int, method: str):
+    def __init__(
+            self,
+            args,
+            lambda_gp: float,
+            gp_method: str,
+            lambda_lp: float,
+            lp_method: str,
+    ):
         self.C = args.channels
         self.batch_size = args.batch_size
         self.wandb = args.wandb
@@ -117,8 +125,10 @@ class WGAN_PairwiseReg:
         self.g_optimizer = optim.Adam(self.G.parameters(), lr=self.learning_rate, betas=(self.b1, self.b2))
 
         self.iters = args.iters
-        self.lambda_term = lambda_term
-        self.method = method
+        self.lambda_gp = lambda_gp
+        self.gp_method = gp_method
+        self.lambda_lp = lambda_lp
+        self.lp_method = lp_method
 
         self.critic_iter = 5
         self.IS_evaluator = InceptionScoreEvaluator(
@@ -162,6 +172,7 @@ class WGAN_PairwiseReg:
         for d_iter, (images, _) in zip(range(self.critic_iter), data_generator):
             self.d_optimizer.zero_grad()
             images = images.to(self.device)
+            images.requires_grad_(True)
             d_score_real = self.D(images)
             d_score_real_mean = d_score_real.mean()
             d_score_real_mean.backward(mone, retain_graph=True)
@@ -173,11 +184,14 @@ class WGAN_PairwiseReg:
             d_score_fake_mean = d_score_fake.mean()
             d_score_fake_mean.backward(one, retain_graph=True)
 
+            gradient_penalty = self.calculate_gradient_penalty(
+                images, d_score_real, fake_images, d_score_fake,
+            )
             # Train with gradient penalty
             lipschitz_penalty = self.calculate_lipschitz_penalty(
                 images, d_score_real, fake_images, d_score_fake,
             )
-            lipschitz_penalty.backward()
+            (lipschitz_penalty + gradient_penalty).backward()
             self.d_optimizer.step()
 
         return {
@@ -185,6 +199,7 @@ class WGAN_PairwiseReg:
             'd_score_fake': d_score_fake_mean.item(),
             'd_loss': d_score_fake_mean.item() - d_score_real_mean.item(),
             'lipschitz_penalty': lipschitz_penalty.item(),
+            'gradient_penalty': gradient_penalty.item(),
         }
 
     def train_generator(self, mone):
@@ -196,6 +211,31 @@ class WGAN_PairwiseReg:
         g_loss.backward(mone)
         self.g_optimizer.step()
         return {'g_loss': -g_loss.item()}
+
+    def calculate_gradient_penalty(self, real_images, real_scores, fake_images, fake_scores):
+        gps = []
+        for gp_type, images, scores in zip(
+                ['real', 'fake'],
+                [real_images, fake_images],
+                [real_scores, fake_scores],
+        ):
+            if gp_type in self.gp_method:
+                gradients = autograd.grad(
+                    outputs=scores,
+                    inputs=images,
+                    grad_outputs=torch.ones(scores.size(), device=self.device),
+                    create_graph=True,
+                    retain_graph=True,
+                    allow_unused=True,
+                )[0]
+                gradients = gradients.view(gradients.size(0), -1)
+                gps.append(((gradients.norm(2, dim=1) - 1) ** 2))
+
+        if len(gps) > 0:
+            gradient_penalty = torch.cat(gps).mean()
+        else:
+            gradient_penalty = 0.
+        return gradient_penalty * self.lambda_gp
 
     def calculate_lipschitz_penalty(self, real_images, real_scores, fake_images, fake_scores):
         real_images = real_images.view(len(real_images), -1)  # (N, D)
@@ -212,14 +252,14 @@ class WGAN_PairwiseReg:
         lipschitz_square = (
             pairwise_score_square_dist / (pairwise_image_square_dist + epsilon)
         )
-        if self.method == 'mean':
+        if self.lp_method == 'mean':
             lipschitz_square = lipschitz_square.mean()
-        elif self.method == 'max':
+        elif self.lp_method == 'max':
             lipschitz_square = lipschitz_square.max()
         else:
             raise ValueError('Invalid method')
         lipschitz_penalty = torch.clamp_min(lipschitz_square, 1.) - 1.
-        return lipschitz_penalty * self.lambda_term
+        return lipschitz_penalty * self.lambda_lp
 
     def generate_img(self, num: int):
         with torch.no_grad():
