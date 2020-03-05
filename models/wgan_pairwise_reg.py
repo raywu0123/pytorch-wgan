@@ -13,6 +13,7 @@ from utils import (
     get_device,
     get_prior,
 )
+from .utils import total_gradient_norm
 from .networks import Generator, Discriminator
 from regularizers.base import RegularizerBase
 
@@ -108,10 +109,12 @@ class WGAN_PairwiseReg:
         penalty_terms = {
             key: val for key, val in penalty_terms.items() if val is not None
         }
+        total_param_gradient_norm = total_gradient_norm(self.D.parameters())
         return {
             'd_score_real': d_score_real_mean.item(),
             'd_score_fake': d_score_fake_mean.item(),
             'd_loss': d_score_fake_mean.item() - d_score_real_mean.item(),
+            'd_total_param_gradient_norm': total_param_gradient_norm,
             **penalty_terms,
         }
 
@@ -123,7 +126,11 @@ class WGAN_PairwiseReg:
         g_loss = g_loss.mean()
         g_loss.backward(mone)
         self.g_optimizer.step()
-        return {'g_loss': -g_loss.item()}
+        total_param_gradient_norm = total_gradient_norm(self.G.parameters())
+        return {
+            'g_loss': -g_loss.item(),
+            'g_total_param_gradient_norm': total_param_gradient_norm,
+        }
 
     def generate_img(self, num: int):
         with torch.no_grad():

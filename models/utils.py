@@ -9,6 +9,15 @@ def pairwise_euclidean_square_distance(a: torch.Tensor, b: torch.Tensor):
     return square_dist.clamp_min(0.)
 
 
+def total_gradient_norm(params):
+    total_norm = 0
+    for p in params:
+        param_norm = p.grad.data.norm(2)
+        total_norm += param_norm.item() ** 2
+    total_norm = total_norm ** (1. / 2)
+    return total_norm
+
+
 class EMA(nn.Module):
 
     def __init__(self, decay_rate):
