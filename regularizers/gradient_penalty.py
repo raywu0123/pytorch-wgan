@@ -37,7 +37,7 @@ class GradientPenaltyRegularizer(RegularizerBase):
                 allow_unused=True,
             )[0]
             gradients = gradients.view(gradients.size(0), -1)
-            penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.lambd
+            penalty = ((gradients.norm(2, dim=1) - self.center) ** 2).mean() * self.lambd
             penalties.append(penalty)
 
         penalty_mean = sum(penalties) / len(penalties)
