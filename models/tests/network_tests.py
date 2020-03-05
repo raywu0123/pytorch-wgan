@@ -1,6 +1,6 @@
 import torch
 
-from models.wgan_gradient_penalty import Discriminator
+from models.networks import Discriminator
 
 
 def test_output_shape():

@@ -3,6 +3,7 @@ from yoctol_argparse.actions import IdKwargs
 from yoctol_argparse.types import path, int_in_range
 
 from models import MODEL_HUB
+from regularizers import RegularizerFactory
 
 
 def parse_args():
@@ -14,6 +15,13 @@ def parse_args():
         id_choices=MODEL_HUB.keys(),
         split_token=',',
         default=IdKwargs.IdKwargsPair('WGAN-PR', dict(lambda_term=10., method='max')),
+    )
+    parser.add_argument(
+        '--regularizers',
+        action=IdKwargs,
+        id_choices=RegularizerFactory.builder_fns.keys(),
+        sub_action='append',
+        split_token=',',
     )
     parser.add_argument(
         '--dataroot',

@@ -15,7 +15,7 @@ from utils import (
     epsilon,
 )
 from .utils import EMA, pairwise_euclidean_square_distance
-from .wgan_gradient_penalty import Discriminator, Generator
+from .networks import Discriminator, Generator
 
 
 class WGAN_PairwiseConstraint:
