@@ -90,10 +90,11 @@ class WGAN_PairwiseReg:
             d_score_real_mean.backward(mone, retain_graph=True)
 
             z = self.get_prior()
+            z.requires_grad = True
             fake_images = self.G(z)
-            fake_images.requires_grad_(True)
             d_score_fake = self.D(fake_images)
             d_score_fake_mean = d_score_fake.mean()
+            fake_images.retain_grad()
             d_score_fake_mean.backward(one, retain_graph=True)
 
             penalty_terms = {
@@ -115,6 +116,7 @@ class WGAN_PairwiseReg:
             'd_score_fake': d_score_fake_mean.item(),
             'd_loss': d_score_fake_mean.item() - d_score_real_mean.item(),
             'd_total_param_gradient_norm': total_param_gradient_norm,
+            'd_fake_image_gradient_norm': fake_images.grad.norm(2).item(),
             **penalty_terms,
         }
 
@@ -124,12 +126,14 @@ class WGAN_PairwiseReg:
         fake_images = self.G(z)
         g_loss = self.D(fake_images)
         g_loss = g_loss.mean()
+        fake_images.retain_grad()
         g_loss.backward(mone)
         self.g_optimizer.step()
         total_param_gradient_norm = total_gradient_norm(self.G.parameters())
         return {
             'g_loss': -g_loss.item(),
             'g_total_param_gradient_norm': total_param_gradient_norm,
+            'g_fake_image_gradient_norm': fake_images.grad.norm(2).item(),
         }
 
     def generate_img(self, num: int):
