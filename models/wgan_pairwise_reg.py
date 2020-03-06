@@ -5,6 +5,7 @@ from typing import List
 
 import numpy as np
 import torch
+from torch import nn
 import torch.optim as optim
 import wandb
 
@@ -96,7 +97,7 @@ class WGAN_PairwiseReg:
             d_score_fake_mean = d_score_fake.mean()
             fake_images.retain_grad()
             d_score_fake_mean.backward(one, retain_graph=True)
-
+            fake_image_gradient_norm = fake_images.grad.norm(2).item()
             penalty_terms = {
                 str(regularizer):
                 regularizer(
@@ -105,6 +106,8 @@ class WGAN_PairwiseReg:
                 )
                 for regularizer in regularizers
             }
+
+            nn.utils.clip_grad_norm_(self.D.parameters(), 20.)
             self.d_optimizer.step()
 
         penalty_terms = {
@@ -116,7 +119,8 @@ class WGAN_PairwiseReg:
             'd_score_fake': d_score_fake_mean.item(),
             'd_loss': d_score_fake_mean.item() - d_score_real_mean.item(),
             'd_total_param_gradient_norm': total_param_gradient_norm,
-            'd_fake_image_gradient_norm': fake_images.grad.norm(2).item(),
+            'd_fake_image_gradient_norm': fake_image_gradient_norm,
+            'd_fake_image_gradient_norm_with_penalty': fake_images.grad.norm(2).item(),
             **penalty_terms,
         }
 
